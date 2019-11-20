@@ -15,18 +15,34 @@
 # You should have received a copy of the GNU General Public License
 # along with kube-apiserver-vip.  If not, see <http://www.gnu.org/licenses/>.
 
-[ -n "$KEEPALIVED_VIP" ] || {
+[ -n "${KEEPALIVED_VIP}" ] || {
   echo "missing KEEPALIVED_VIP from environment"
   exit 1
 }
+
 [ -f /etc/kubernetes/kubeconfig ] || {
   echo "missing /etc/kubernetes/kubeconfig"
   exit 1
 }
 
-sed -i -e 's/%KEEPALIVED_VIRTUAL_IPADDRESS%/'$KEEPALIVED_VIP'/g' /etc/keepalived/keepalived.conf
+cat <<EOF > /etc/keepalived/keepalived.conf
+! Configuration File for keepalived
+vrrp_script check_apiserver {
+  script "/usr/bin/curl -sk -m 2 -E /etc/keepalived/client.crt https://127.0.0.1:6443/healthz -o /dev/null"
+}
+vrrp_instance VI_51 {
+  interface eth0
+  virtual_router_id 51
+  virtual_ipaddress {
+    ${KEEPALIVED_VIP}
+  }
+  track_script {
+    check_apiserver
+  }
+}
+EOF
 
-grep 'client-key-data' /etc/kubernetes/kubeconfig | awk '{print $2}' | base64 -d > /usr/libexec/keepalived/client.key
-grep 'client-certificate-data' /etc/kubernetes/kubeconfig | awk '{print $2}' | base64 -d > /usr/libexec/keepalived/client.crt
+grep 'client-key-data' /etc/kubernetes/kubeconfig | awk '{print $2}' | base64 -d > /etc/keepalived/client.crt
+grep 'client-certificate-data' /etc/kubernetes/kubeconfig | awk '{print $2}' | base64 -d >> /etc/keepalived/client.crt
 
 exec keepalived -lnGP
